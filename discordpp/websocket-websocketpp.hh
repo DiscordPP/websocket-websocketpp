@@ -13,13 +13,14 @@
 namespace discordpp {
     namespace asio = boost::asio;
     using json = nlohmann::json;
+    using WSMessageHandler = std::function<void(aios_ptr, json)>;
 
     class WebsocketWebsocketPPModule : public WebsocketModule {
         using client = websocketpp::client<websocketpp::config::asio_tls_client>;
         using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
     public:
-        void init(std::shared_ptr<asio::io_service> asio_ios, const std::string &token, const std::string &gateway, std::function<void(json)> message_handler){
+        void init(std::shared_ptr<asio::io_service> asio_ios, const std::string &token, const std::string &gateway, WSMessageHandler message_handler){
             keepalive_timer_ = std::make_shared<asio::steady_timer>(*asio_ios);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
@@ -31,11 +32,12 @@ namespace discordpp {
 
             client_.init_asio(asio_ios.get());
 
-            client_.set_message_handler([message_handler, asio_ios](websocketpp::connection_hdl hdl, message_ptr msg){
+            client_.set_message_handler([this, message_handler, asio_ios](websocketpp::connection_hdl hdl, message_ptr msg){
                 json jmessage = json::parse(msg->get_payload());
-                message_handler(jmessage);
+                keepalivewrap(asio_ios, jmessage, message_handler);
             });
             client_.set_open_handler([this, token](websocketpp::connection_hdl hdl){on_open(hdl, token);});
+            //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
 
             websocketpp::lib::error_code ec;
             std::cout << "Connecting to gateway at " << gateway << "\n";
@@ -73,6 +75,10 @@ namespace discordpp {
             std::cout << "Client Handshake:\n" << connect.dump(1) << "\n";
             client_.send(hdl, connect.dump(), websocketpp::frame::opcode::text);
         }
+
+        //void on_close(websocketpp::connection_hdl hdl, std::string token){
+        //    hdl.
+        //}
 
         void sendkeepalive(json message){
             client_.send(connection_, message.dump(), websocketpp::frame::opcode::text);
