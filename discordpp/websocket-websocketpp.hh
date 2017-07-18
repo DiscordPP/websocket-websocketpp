@@ -13,14 +13,13 @@
 namespace discordpp {
     namespace asio = boost::asio;
     using json = nlohmann::json;
-    using WSMessageHandler = std::function<void(aios_ptr, json)>;
 
     class WebsocketWebsocketPPModule : public WebsocketModule {
         using client = websocketpp::client<websocketpp::config::asio_tls_client>;
         using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
     public:
-        void init(std::shared_ptr<asio::io_service> asio_ios, const std::string &token, const std::string &gateway, WSMessageHandler message_handler){
+        void init(aios_ptr asio_ios, const std::string &token, const std::string &gateway, DispatchHandler disHandler){
             keepalive_timer_ = std::make_shared<asio::steady_timer>(*asio_ios);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
@@ -32,11 +31,16 @@ namespace discordpp {
 
             client_.init_asio(asio_ios.get());
 
-            client_.set_message_handler([this, message_handler, asio_ios](websocketpp::connection_hdl hdl, message_ptr msg){
+            client_.set_message_handler([this, asio_ios, token, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
                 json jmessage = json::parse(msg->get_payload());
-                keepalivewrap(asio_ios, jmessage, message_handler);
+                std::vector<json> toSend = handleMessage(asio_ios, token, disHandler, jmessage);
+                if(!toSend.empty()){
+                    for(json msg : toSend) {
+                        client_.send(hdl, msg.dump(), websocketpp::frame::opcode::text);
+                    }
+                }
             });
-            client_.set_open_handler([this, token](websocketpp::connection_hdl hdl){on_open(hdl, token);});
+            client_.set_open_handler([this](websocketpp::connection_hdl hdl){std::cout << "Connection established.\n";});
             //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
 
             websocketpp::lib::error_code ec;
@@ -52,33 +56,40 @@ namespace discordpp {
             }
         }
     private:
-        void on_open(websocketpp::connection_hdl hdl, std::string token){
-            std::cout << "Connection established.\n";
-
-            json connect = {
-                    {"op", 2},
-                    {"d", {
-                                   {"token", token},
-                                   {"v", 4},
-                                   {"properties", {
-                                                          {"$os", "linux"},
-                                                          {"$browser", "discordpp"},
-                                                          {"$device", "discordpp"},
-                                                          {"$referrer",""}, {"$referring_domain",""}
-                                                  }
-                                   },
-                                   {"compress", false},
-                                   {"large_threshold", 250}
-                           }
-                    }
-            };
-            std::cout << "Client Handshake:\n" << connect.dump(1) << "\n";
-            client_.send(hdl, connect.dump(), websocketpp::frame::opcode::text);
-        }
+        //void on_open(websocketpp::connection_hdl hdl, std::string token){
+        //    std::cout << "Connection established.\n";
+        //}
 
         //void on_close(websocketpp::connection_hdl hdl, std::string token){
         //    hdl.
         //}
+
+        /*void on_message(websocketpp::connection_hdl hdl, std::string token, websocketpp::connection_hdl hdl, message_ptr msg) {
+            json jmessage = json::parse(msg->get_payload());
+            if (jmessage["op"].get<int>() == 0) { //Dispatch
+                std::map<std::string, Handler>::iterator it = handlers_.find(jmessage["t"]);
+                if (it != handlers_.end()) {
+                    asio_ios->post(std::bind(it->second, this, asio_ios, jmessage));
+                } else {
+                    std::cout << "There is no function for the event " << jmessage["t"] << ".\n";
+                }
+                if (jmessage["t"] == "READY") {
+
+                }
+            } else if (jmessage["op"].get<int>() == 1) {
+                //Heartbeat (This isn't implemented yet, still using periodic heartbeats for now.)
+                //client_.send(hdl, jmessage.dump(), websocketpp::frame::opcode::text);
+            } else if (jmessage["op"].get<int>() == 10) {
+                json connect =
+                std::cout << "Client Handshake:\n" << connect.dump(1) << "\n";
+
+                client_.send(hdl, connect.dump(), websocketpp::frame::opcode::text);
+                uint32_t ms = jmessage["d"]["heartbeat_interval"];
+                keepalive(ms);
+            } else { //Wat
+                std::cout << "Unexpected opcode received:\n\n" << jmessage.dump(4) << "\n\n\n";
+            }
+        }*/
 
         void sendkeepalive(json message){
             client_.send(connection_, message.dump(), websocketpp::frame::opcode::text);
