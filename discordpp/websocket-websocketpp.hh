@@ -19,7 +19,7 @@ namespace discordpp {
         using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
     public:
-        void init(aios_ptr asio_ios, const std::string &token, const std::string &gateway, DispatchHandler disHandler){
+        void init(aios_ptr asio_ios, const std::string &token, const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
             keepalive_timer_ = std::make_shared<asio::steady_timer>(*asio_ios);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
@@ -31,14 +31,14 @@ namespace discordpp {
 
             client_.init_asio(asio_ios.get());
 
-            client_.set_message_handler([this, asio_ios, token, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
+            client_.set_message_handler([this, asio_ios, token, apiVersion, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
                 json jmessage = json::parse(msg->get_payload());
-                std::vector<json> toSend = handleMessage(asio_ios, token, disHandler, jmessage);
-                if(!toSend.empty()){
+                handleMessage(asio_ios, token, apiVersion, disHandler, jmessage);
+                /*if(!toSend.empty()){
                     for(json msg : toSend) {
                         client_.send(hdl, msg.dump(), websocketpp::frame::opcode::text);
                     }
-                }
+                }*/
             });
             client_.set_open_handler([this](websocketpp::connection_hdl hdl){std::cout << "Connection established.\n";});
             //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
@@ -54,6 +54,10 @@ namespace discordpp {
                 // exchanged until the event loop starts running in the next line.
                 client_.connect(connection_);
             }
+        }
+
+        void send(int opcode = 0, json payload = {}){
+            client_.send(connection_, json({{"op", opcode}, {"d", payload}}).dump(), websocketpp::frame::opcode::TEXT);
         }
     private:
         //void on_open(websocketpp::connection_hdl hdl, std::string token){
