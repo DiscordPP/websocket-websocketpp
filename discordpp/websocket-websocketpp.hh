@@ -20,7 +20,9 @@ namespace discordpp {
 
     public:
         void init(aios_ptr asio_ios, const std::string &token, const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
-            keepalive_timer_ = std::make_shared<asio::steady_timer>(*asio_ios);
+            gateway_ = gateway;
+
+            keepalive_timer_ = std::make_unique<asio::steady_timer>(*asio_ios);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
             client_.clear_access_channels(websocketpp::log::alevel::frame_payload);
@@ -40,12 +42,35 @@ namespace discordpp {
                     }
                 }*/
             });
-            client_.set_open_handler([this](websocketpp::connection_hdl hdl){std::cout << "Connection established.\n";});
+            client_.set_open_handler ([this](websocketpp::connection_hdl hdl){
+                std::cout << "Connection established.\n";
+            });
+            client_.set_close_handler([this, asio_ios, token](websocketpp::connection_hdl hdl){
+                std::cout << "Connection lost.\n" << std::endl;; closeHandler(asio_ios, token);
+            });
+            client_.set_fail_handler([this, asio_ios, token](websocketpp::connection_hdl hdl){
+                connect_timer_ = std::make_unique<asio::deadline_timer>(*asio_ios, boost::posix_time::seconds(5));
+                connect_timer_->async_wait([this](const boost::system::error_code&){connect();});
+            });
             //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
 
+            connect();
+        }
+
+        void send(int opcode = 0, json payload = {}){
+            client_.send(connection_, json({{"op", opcode}, {"d", payload}}).dump(), websocketpp::frame::opcode::TEXT);
+        }
+
+        void close(){
+            client_.close(connection_, 4000, "No heartbeat ack");
+        }
+
+    protected:
+        void connect(){
             websocketpp::lib::error_code ec;
-            std::cout << "Connecting to gateway at " << gateway << "\n";
-            connection_ = client_.get_connection(gateway, ec);
+            std::cout << "Connecting to gateway at " << gateway_ << "\n";
+            connection_ = client_.get_connection(gateway_, ec);
+            std::cout << "here" << std::endl;
             if (ec) {
                 std::cout << "could not create connection because: " << ec.message() << std::endl;
                 //TODO TBD: throw something
@@ -56,48 +81,10 @@ namespace discordpp {
             }
         }
 
-        void send(int opcode = 0, json payload = {}){
-            client_.send(connection_, json({{"op", opcode}, {"d", payload}}).dump(), websocketpp::frame::opcode::TEXT);
-        }
-    private:
-        //void on_open(websocketpp::connection_hdl hdl, std::string token){
-        //    std::cout << "Connection established.\n";
-        //}
-
-        //void on_close(websocketpp::connection_hdl hdl, std::string token){
-        //    hdl.
-        //}
-
-        /*void on_message(websocketpp::connection_hdl hdl, std::string token, websocketpp::connection_hdl hdl, message_ptr msg) {
-            json jmessage = json::parse(msg->get_payload());
-            if (jmessage["op"].get<int>() == 0) { //Dispatch
-                std::map<std::string, Handler>::iterator it = handlers_.find(jmessage["t"]);
-                if (it != handlers_.end()) {
-                    asio_ios->post(std::bind(it->second, this, asio_ios, jmessage));
-                } else {
-                    std::cout << "There is no function for the event " << jmessage["t"] << ".\n";
-                }
-                if (jmessage["t"] == "READY") {
-
-                }
-            } else if (jmessage["op"].get<int>() == 1) {
-                //Heartbeat (This isn't implemented yet, still using periodic heartbeats for now.)
-                //client_.send(hdl, jmessage.dump(), websocketpp::frame::opcode::text);
-            } else if (jmessage["op"].get<int>() == 10) {
-                json connect =
-                std::cout << "Client Handshake:\n" << connect.dump(1) << "\n";
-
-                client_.send(hdl, connect.dump(), websocketpp::frame::opcode::text);
-                uint32_t ms = jmessage["d"]["heartbeat_interval"];
-                keepalive(ms);
-            } else { //Wat
-                std::cout << "Unexpected opcode received:\n\n" << jmessage.dump(4) << "\n\n\n";
-            }
-        }*/
-
         void sendkeepalive(json message){
             client_.send(connection_, message.dump(), websocketpp::frame::opcode::text);
         }
+    private:
 
         client client_;
         websocketpp::uri_ptr uri_ptr_;
