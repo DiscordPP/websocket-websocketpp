@@ -19,10 +19,13 @@ namespace discordpp {
         using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
     public:
-        void init(aios_ptr asio_ios, const std::string &token, const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
+        WebsocketWebsocketPPModule(std::shared_ptr<asio::io_service> asio_ios, const std::string &token):
+            WebsocketModule(asio_ios, token){}
+
+        void init(const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
             gateway_ = gateway;
 
-            keepalive_timer_ = std::make_unique<asio::steady_timer>(*asio_ios);
+            keepalive_timer_ = std::make_unique<asio::steady_timer>(*aios_);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
             client_.clear_access_channels(websocketpp::log::alevel::frame_payload);
@@ -31,11 +34,11 @@ namespace discordpp {
                 return websocketpp::lib::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tlsv1);
             });
 
-            client_.init_asio(asio_ios.get());
+            client_.init_asio(aios_.get());
 
-            client_.set_message_handler([this, asio_ios, token, apiVersion, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
+            client_.set_message_handler([this, apiVersion, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
                 json jmessage = json::parse(msg->get_payload());
-                handleMessage(asio_ios, token, apiVersion, disHandler, jmessage);
+                handleMessage(apiVersion, disHandler, jmessage);
                 /*if(!toSend.empty()){
                     for(json msg : toSend) {
                         client_.send(hdl, msg.dump(), websocketpp::frame::opcode::text);
@@ -45,11 +48,12 @@ namespace discordpp {
             client_.set_open_handler ([this](websocketpp::connection_hdl hdl){
                 std::cout << "Connection established.\n";
             });
-            client_.set_close_handler([this, asio_ios, token](websocketpp::connection_hdl hdl){
-                std::cout << "Connection lost.\n" << std::endl;; closeHandler(asio_ios, token);
+            client_.set_close_handler([this](websocketpp::connection_hdl hdl){
+                std::cout << "Connection lost.\n" << std::endl;
+                closeHandler();
             });
-            client_.set_fail_handler([this, asio_ios, token](websocketpp::connection_hdl hdl){
-                connect_timer_ = std::make_unique<asio::deadline_timer>(*asio_ios, boost::posix_time::seconds(5));
+            client_.set_fail_handler([this](websocketpp::connection_hdl hdl){
+                connect_timer_ = std::make_unique<asio::deadline_timer>(*aios_, boost::posix_time::seconds(5));
                 connect_timer_->async_wait([this](const boost::system::error_code&){connect();});
             });
             //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
@@ -62,22 +66,30 @@ namespace discordpp {
         }
 
         void close(){
-            client_.close(connection_, 4000, "No heartbeat ack");
+            keepalive_timer_->cancel();
+            hold_asio_ = std::make_unique<asio::io_service::work>(*aios_);
+            //client_.stop();
+            client_.reset();
+            //client_.close(connection_, 4000, "No heartbeat ack");
         }
 
     protected:
         void connect(){
-            websocketpp::lib::error_code ec;
-            std::cout << "Connecting to gateway at " << gateway_ << "\n";
-            connection_ = client_.get_connection(gateway_, ec);
-            std::cout << "here" << std::endl;
-            if (ec) {
-                std::cout << "could not create connection because: " << ec.message() << std::endl;
-                //TODO TBD: throw something
-            } else {
-                // Note that connect here only requests a connection. No network messages are
-                // exchanged until the event loop starts running in the next line.
-                client_.connect(connection_);
+            try {
+                websocketpp::lib::error_code ec;
+                std::cout << "Connecting to gateway at " << gateway_ << "\n";
+                client::connection_ptr connection = client_.get_connection(gateway_, ec);
+                if (ec) {
+                    std::cout << "could not create connection because: " << ec.message() << std::endl;
+                    //TODO TBD: throw something
+                } else {
+                    // Note that connect here only requests a connection. No network messages are
+                    // exchanged until the event loop starts running in the next line.
+                    client_.connect(connection);
+                    connection_ = connection;
+                }
+            }catch(websocketpp::exception){
+                std::cout << "Connection failed" << "\n";
             }
         }
 
