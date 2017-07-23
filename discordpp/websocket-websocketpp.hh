@@ -19,8 +19,13 @@ namespace discordpp {
         using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
     public:
-        void init(aios_ptr asio_ios, const std::string &token, const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
-            keepalive_timer_ = std::make_shared<asio::steady_timer>(*asio_ios);
+        WebsocketWebsocketPPModule(std::shared_ptr<asio::io_service> asio_ios, const std::string &token):
+            WebsocketModule(asio_ios, token){}
+
+        void init(const unsigned int apiVersion, const std::string &gateway, DispatchHandler disHandler){
+            gateway_ = gateway;
+
+            keepalive_timer_ = std::make_unique<asio::steady_timer>(*aios_);
 
             client_.set_access_channels(websocketpp::log::alevel::all);
             client_.clear_access_channels(websocketpp::log::alevel::frame_payload);
@@ -29,75 +34,69 @@ namespace discordpp {
                 return websocketpp::lib::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tlsv1);
             });
 
-            client_.init_asio(asio_ios.get());
+            client_.init_asio(aios_.get());
 
-            client_.set_message_handler([this, asio_ios, token, apiVersion, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
+            client_.set_message_handler([this, apiVersion, disHandler](websocketpp::connection_hdl hdl, message_ptr msg){
                 json jmessage = json::parse(msg->get_payload());
-                handleMessage(asio_ios, token, apiVersion, disHandler, jmessage);
+                handleMessage(apiVersion, disHandler, jmessage);
                 /*if(!toSend.empty()){
                     for(json msg : toSend) {
                         client_.send(hdl, msg.dump(), websocketpp::frame::opcode::text);
                     }
                 }*/
             });
-            client_.set_open_handler([this](websocketpp::connection_hdl hdl){std::cout << "Connection established.\n";});
+            client_.set_open_handler ([this](websocketpp::connection_hdl hdl){
+                std::cout << "Connection established.\n";
+            });
+            client_.set_close_handler([this](websocketpp::connection_hdl hdl){
+                std::cout << "Connection lost.\n" << std::endl;
+                closeHandler();
+            });
+            client_.set_fail_handler([this](websocketpp::connection_hdl hdl){
+                connect_timer_ = std::make_unique<asio::deadline_timer>(*aios_, boost::posix_time::seconds(5));
+                connect_timer_->async_wait([this](const boost::system::error_code&){connect();});
+            });
             //client_.set_close_handler([this, token](websocketpp::connection_hdl hdl){on_close(hdl, token);})
 
-            websocketpp::lib::error_code ec;
-            std::cout << "Connecting to gateway at " << gateway << "\n";
-            connection_ = client_.get_connection(gateway, ec);
-            if (ec) {
-                std::cout << "could not create connection because: " << ec.message() << std::endl;
-                //TODO TBD: throw something
-            } else {
-                // Note that connect here only requests a connection. No network messages are
-                // exchanged until the event loop starts running in the next line.
-                client_.connect(connection_);
-            }
+            connect();
         }
 
         void send(int opcode = 0, json payload = {}){
             client_.send(connection_, json({{"op", opcode}, {"d", payload}}).dump(), websocketpp::frame::opcode::TEXT);
         }
-    private:
-        //void on_open(websocketpp::connection_hdl hdl, std::string token){
-        //    std::cout << "Connection established.\n";
-        //}
 
-        //void on_close(websocketpp::connection_hdl hdl, std::string token){
-        //    hdl.
-        //}
+        void close(){
+            keepalive_timer_->cancel();
+            hold_asio_ = std::make_unique<asio::io_service::work>(*aios_);
+            //client_.stop();
+            client_.reset();
+            //client_.close(connection_, 4000, "No heartbeat ack");
+        }
 
-        /*void on_message(websocketpp::connection_hdl hdl, std::string token, websocketpp::connection_hdl hdl, message_ptr msg) {
-            json jmessage = json::parse(msg->get_payload());
-            if (jmessage["op"].get<int>() == 0) { //Dispatch
-                std::map<std::string, Handler>::iterator it = handlers_.find(jmessage["t"]);
-                if (it != handlers_.end()) {
-                    asio_ios->post(std::bind(it->second, this, asio_ios, jmessage));
+    protected:
+        void connect(){
+            try {
+                websocketpp::lib::error_code ec;
+                std::cout << "Connecting to gateway at " << gateway_ << "\n";
+                client::connection_ptr connection = client_.get_connection(gateway_, ec);
+                if (ec) {
+                    std::cout << "could not create connection because: " << ec.message() << std::endl;
+                    //TODO TBD: throw something
                 } else {
-                    std::cout << "There is no function for the event " << jmessage["t"] << ".\n";
+                    // Note that connect here only requests a connection. No network messages are
+                    // exchanged until the event loop starts running in the next line.
+                    client_.connect(connection);
+                    connection_ = connection;
                 }
-                if (jmessage["t"] == "READY") {
-
-                }
-            } else if (jmessage["op"].get<int>() == 1) {
-                //Heartbeat (This isn't implemented yet, still using periodic heartbeats for now.)
-                //client_.send(hdl, jmessage.dump(), websocketpp::frame::opcode::text);
-            } else if (jmessage["op"].get<int>() == 10) {
-                json connect =
-                std::cout << "Client Handshake:\n" << connect.dump(1) << "\n";
-
-                client_.send(hdl, connect.dump(), websocketpp::frame::opcode::text);
-                uint32_t ms = jmessage["d"]["heartbeat_interval"];
-                keepalive(ms);
-            } else { //Wat
-                std::cout << "Unexpected opcode received:\n\n" << jmessage.dump(4) << "\n\n\n";
+            }catch(websocketpp::exception){
+                std::cout << "Connection failed" << "\n";
             }
-        }*/
+        }
 
         void sendkeepalive(json message){
             client_.send(connection_, message.dump(), websocketpp::frame::opcode::text);
         }
+    private:
 
         client client_;
         websocketpp::uri_ptr uri_ptr_;
