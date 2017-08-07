@@ -49,10 +49,11 @@ namespace discordpp {
                 std::cout << "Connection established.\n";
             });
             client_.set_close_handler([this](websocketpp::connection_hdl hdl){
-                std::cout << "Connection lost.\n" << std::endl;
-                closeHandler();
+                std::cerr << "Connection lost.\n" << std::endl;
+                connect();
             });
             client_.set_fail_handler([this](websocketpp::connection_hdl hdl){
+                std::cerr << "Connection failed.\n";
                 connect_timer_ = std::make_unique<asio::deadline_timer>(*aios_, boost::posix_time::seconds(5));
                 connect_timer_->async_wait([this](const boost::system::error_code&){connect();});
             });
